@@ -30,7 +30,6 @@ export default function TradingChart({symbol}:{symbol:string}){
  const [tool,setTool]=useState<Tool>('cursor');
  const [drawings,setDrawings]=useState<Drawing[]>(()=>load(symbol,'1H'));
  const [pending,setPending]=useState<Point|null>(null);
- const [showVolume,setShowVolume]=useState(false);
  const [showGrid,setShowGrid]=useState(true);
  const current=useRef({tool,drawings,pending});
  current.current={tool,drawings,pending};
@@ -61,7 +60,7 @@ export default function TradingChart({symbol}:{symbol:string}){
  },[symbol,tf,showGrid]);
  useEffect(()=>{
  localStorage.setItem(storageKey(symbol,tf),JSON.stringify(drawings));
- const chart=chartRef.current;const candle=seriesRef.current;if(!chart||!candle)return;
+ const chart=chartRef.current;if(!chart||!seriesRef.current)return;
  overlays.current.forEach(s=>chart.removeSeries(s));overlays.current=[];
  const addLine=(a:Point,b:Point,color:string,style=LineStyle.Solid)=>{
  const s=chart.addLineSeries({color,lineWidth:2,lineStyle:style,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
@@ -70,7 +69,7 @@ export default function TradingChart({symbol}:{symbol:string}){
  s.setData(pts.map(p=>({time:p.time,value:p.price})));overlays.current.push(s);
  };
  for(const d of drawings){
- if(d.kind==='horizontal'){candle.createPriceLine({price:d.a.price,color:'#f6c46a',lineWidth:2,lineStyle:LineStyle.Dashed,axisLabelVisible:true,title:'Livello'});continue}
+ if(d.kind==='horizontal'){const span=tfSeconds[tf];addLine({time:(d.a.time-90*span) as UTCTimestamp,price:d.a.price},{time:(d.a.time+90*span) as UTCTimestamp,price:d.a.price},'#f6c46a',LineStyle.Dashed);continue}
  if(!d.b)continue;
  if(d.kind==='trend')addLine(d.a,d.b,'#5bb8ff');
  if(d.kind==='fib'){
@@ -82,7 +81,6 @@ export default function TradingChart({symbol}:{symbol:string}){
  }
  }
  },[drawings,symbol,tf,showGrid]);
- // Price lines are recreated by chart remount on timeframe/symbol changes.
  const changeTool=(next:Tool)=>{setTool(next);setPending(null)};
  const undo=()=>setDrawings(d=>d.slice(0,-1));
  const clear=()=>{setDrawings([]);setPending(null);setTf(x=>x)};
