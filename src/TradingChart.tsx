@@ -75,7 +75,7 @@ export default function TradingChart({symbol}:{symbol:string}){
  if(!d.b)continue;
  if(d.kind==='trend')addLine(d.a,d.b,'#5bb8ff');
  if(d.kind==='fib'){
- const lo=Math.min(d.a.time,d.b.time),hi=Math.max(d.a.time,d.b.time);
+ const lo=Math.min(d.a.time,d.b.time) as UTCTimestamp,hi=Math.max(d.a.time,d.b.time) as UTCTimestamp;
  for(const ratio of [0,.236,.382,.5,.618,.786,1]){
  const price=d.a.price+(d.b.price-d.a.price)*ratio;
  addLine({time:lo,price},{time:hi,price},ratio===.5?'#f6c46a':'#9d8ef7',LineStyle.Dashed);
