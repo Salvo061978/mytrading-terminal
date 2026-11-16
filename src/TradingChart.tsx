@@ -30,10 +30,11 @@ export default function TradingChart({symbol}:{symbol:string}){
  const [tool,setTool]=useState<Tool>('cursor');
  const [drawings,setDrawings]=useState<Drawing[]>(()=>load(symbol,'1H'));
  const [pending,setPending]=useState<Point|null>(null);
+ const loadedKey=useRef(storageKey(symbol,'1H'));
  const [showGrid,setShowGrid]=useState(true);
  const current=useRef({tool,drawings,pending});
  current.current={tool,drawings,pending};
- useEffect(()=>{setDrawings(load(symbol,tf));setPending(null)},[symbol,tf]);
+ useEffect(()=>{loadedKey.current='';setDrawings(load(symbol,tf));setPending(null)},[symbol,tf]);
  useEffect(()=>{
  if(!holder.current)return;
  const el=holder.current;
@@ -59,6 +60,7 @@ export default function TradingChart({symbol}:{symbol:string}){
  return ()=>{ro.disconnect();chart.unsubscribeClick(onClick);chart.remove();chartRef.current=null;seriesRef.current=null;overlays.current=[]};
  },[symbol,tf,showGrid]);
  useEffect(()=>{
+ if(loadedKey.current!==storageKey(symbol,tf)){loadedKey.current=storageKey(symbol,tf);return}
  localStorage.setItem(storageKey(symbol,tf),JSON.stringify(drawings));
  const chart=chartRef.current;if(!chart||!seriesRef.current)return;
  overlays.current.forEach(s=>chart.removeSeries(s));overlays.current=[];
