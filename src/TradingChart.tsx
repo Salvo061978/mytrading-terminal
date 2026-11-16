@@ -6,18 +6,25 @@ type Tool='cursor'|'horizontal'|'trend'|'fib';
 type Point={time:UTCTimestamp;price:number};
 type Drawing={id:number;kind:Exclude<Tool,'cursor'>;a:Point;b?:Point};
 const tfSeconds:Record<TF,number>={'5m':300,'15m':900,'1H':3600,'4H':14400,'1D':86400};
-function generate(symbol:string,tf:TF):CandlestickData<UTCTimestamp>[]{
- const start=symbol==='XAUUSD'?2600:symbol==='NAS100'?21000:symbol==='GER40'?19000:symbol==='GBPUSD'?1.2658:1.0842;
- const scale=start>100?start*.0008:start*.0007;
- const seed=symbol.split('').reduce((n,c)=>n+c.charCodeAt(0),0);
- let p=start;const step=tfSeconds[tf];const end=Math.floor(Date.now()/1000/step)*step;
- return Array.from({length:240},(_,i)=>{
- const wave=Math.sin((i+seed)*.29)*.8+Math.cos((i+seed)*.083)*1.2+Math.sin((i+seed)*.023)*.7;
- const open=p,close=p+wave*scale*.28;
- const high=Math.max(open,close)+scale*(.12+Math.abs(Math.sin(i*1.8+seed))*.35);
- const low=Math.min(open,close)-scale*(.12+Math.abs(Math.cos(i*1.6+seed))*.35);
- p=close;return {time:(end-(239-i)*step) as UTCTimestamp,open,high,low,close};
- });
+const marketSymbols:Record<string,string>={EURUSD:'EUR/USD',GBPUSD:'GBP/USD',XAUUSD:'XAU/USD',NAS100:'NDX',GER40:'DAX'};
+const intervals:Record<TF,string>={'5m':'5min','15m':'15min','1H':'1h','4H':'4h','1D':'1day'};
+function parseUTC(value:string):UTCTimestamp{
+ const normalized=value.includes(' ')?value.replace(' ','T'):value+'T00:00:00';
+ return Math.floor(new Date(normalized+'Z').getTime()/1000) as UTCTimestamp;
+}
+async function marketCandles(symbol:string,tf:TF,key:string,signal:AbortSignal):Promise<CandlestickData<UTCTimestamp>[]>{
+ const url=new URL('https://api.twelvedata.com/time_series');
+ url.search=new URLSearchParams({symbol:marketSymbols[symbol]||symbol,interval:intervals[tf],outputsize:'500',timezone:'UTC',apikey:key}).toString();
+ const response=await fetch(url,{signal});
+ if(!response.ok)throw new Error('HTTP '+response.status);
+ const payload=await response.json();
+ if(payload.status==='error'||!Array.isArray(payload.values))throw new Error(payload.message||'Dati non disponibili per questo simbolo/timeframe');
+ const candles=payload.values.map((v:{datetime:string;open:string;high:string;low:string;close:string})=>({
+ time:parseUTC(v.datetime),open:Number(v.open),high:Number(v.high),low:Number(v.low),close:Number(v.close)
+ })).filter((v:CandlestickData<UTCTimestamp>)=>Number.isFinite(v.close)&&Number.isFinite(v.open)&&Number.isFinite(v.high)&&Number.isFinite(v.low));
+ candles.sort((a:CandlestickData<UTCTimestamp>,b:CandlestickData<UTCTimestamp>)=>a.time-b.time);
+ if(!candles.length)throw new Error('Nessuna candela valida ricevuta');
+ return candles.filter((v:CandlestickData<UTCTimestamp>,i:number,a:CandlestickData<UTCTimestamp>[])=>i===0||v.time!==a[i-1].time);
 }
 function storageKey(symbol:string,tf:TF){return 'mytrading:v02:drawings:'+symbol+':'+tf}
 function load(symbol:string,tf:TF):Drawing[]{try{const data=JSON.parse(localStorage.getItem(storageKey(symbol,tf))||'[]');return Array.isArray(data)?data:[]}catch{return []}}
@@ -32,16 +39,28 @@ export default function TradingChart({symbol}:{symbol:string}){
  const [pending,setPending]=useState<Point|null>(null);
  const loadedKey=useRef(storageKey(symbol,'1H'));
  const [showGrid,setShowGrid]=useState(true);
+ const [apiKey,setApiKey]=useState(()=>sessionStorage.getItem('mytrading:tdkey')||'');
+ const [draftKey,setDraftKey]=useState(()=>sessionStorage.getItem('mytrading:tdkey')||'');
+ const [market,setMarket]=useState<CandlestickData<UTCTimestamp>[]>([]);
+ const [status,setStatus]=useState('Inserisci una chiave Twelve Data per caricare prezzi reali');
+ const [updated,setUpdated]=useState('');
+ const [refresh,setRefresh]=useState(0);
  const current=useRef({tool,drawings,pending});
  current.current={tool,drawings,pending};
  useEffect(()=>{loadedKey.current='';setDrawings(load(symbol,tf));setPending(null)},[symbol,tf]);
+ useEffect(()=>{
+ if(!apiKey){setMarket([]);setStatus('Nessun feed collegato');return}
+ const controller=new AbortController();setStatus('Caricamento dati Twelve Data…');
+ marketCandles(symbol,tf,apiKey,controller.signal).then(data=>{if(controller.signal.aborted)return;setMarket(data);setUpdated(new Date().toLocaleString('it-IT'));setStatus('Dati Twelve Data · '+data.length+' candele');}).catch(e=>{if(controller.signal.aborted)return;setMarket([]);setStatus('Errore feed: '+(e instanceof Error?e.message:String(e)));});
+ return ()=>controller.abort();
+ },[symbol,tf,apiKey,refresh]);
  useEffect(()=>{
  if(!holder.current)return;
  const el=holder.current;
  const chart=createChart(el,{width:el.clientWidth,height:Math.max(390,el.clientHeight),layout:{background:{type:ColorType.Solid,color:'#101722'},textColor:'#9daec2'},grid:{vertLines:{color:showGrid?'#202b39':'#101722'},horzLines:{color:showGrid?'#202b39':'#101722'}},rightPriceScale:{borderColor:'#2a3645'},timeScale:{borderColor:'#2a3645',timeVisible:true,secondsVisible:false},crosshair:{vertLine:{labelBackgroundColor:'#344b62'},horzLine:{labelBackgroundColor:'#344b62'}}});
  chartRef.current=chart;
  const s=chart.addCandlestickSeries({upColor:'#20b88a',downColor:'#ec6575',borderVisible:false,wickUpColor:'#20b88a',wickDownColor:'#ec6575',priceFormat:symbol==='EURUSD'||symbol==='GBPUSD'?{type:'price',precision:5,minMove:.00001}:{type:'price',precision:2,minMove:.01}});
- seriesRef.current=s;s.setData(generate(symbol,tf));chart.timeScale().fitContent();
+ seriesRef.current=s;s.setData([]);
  const onClick=(param:{time?:Time;point?:{x:number;y:number}})=>{
  if(!param.point||param.time===undefined)return;
  const price=s.coordinateToPrice(param.point.y);
@@ -59,6 +78,7 @@ export default function TradingChart({symbol}:{symbol:string}){
  const ro=new ResizeObserver(()=>chart.applyOptions({width:el.clientWidth,height:Math.max(390,el.clientHeight)}));ro.observe(el);
  return ()=>{ro.disconnect();chart.unsubscribeClick(onClick);chart.remove();chartRef.current=null;seriesRef.current=null;overlays.current=[]};
  },[symbol,tf,showGrid]);
+ useEffect(()=>{const s=seriesRef.current;const c=chartRef.current;if(!s||!c)return;s.setData(market);if(market.length)c.timeScale().fitContent()},[market,symbol,tf,showGrid]);
  useEffect(()=>{
  if(loadedKey.current!==storageKey(symbol,tf)){loadedKey.current=storageKey(symbol,tf);return}
  localStorage.setItem(storageKey(symbol,tf),JSON.stringify(drawings));
@@ -87,7 +107,8 @@ export default function TradingChart({symbol}:{symbol:string}){
  const undo=()=>setDrawings(d=>d.slice(0,-1));
  const clear=()=>{setDrawings([]);setPending(null);setTf(x=>x)};
  return <div className="advancedChart">
- <div className="chartTop"><div><strong>{symbol}</strong><span className="muted"> · SIMULAZIONE / Nessun feed live</span></div><div className="timeframes">{(['5m','15m','1H','4H','1D'] as TF[]).map(t=><button key={t} className={tf===t?'active':''} onClick={()=>setTf(t)}>{t}</button>)}</div></div>
+ <div className="chartTop"><div><strong>{symbol}</strong><span className="muted"> · {status}{updated?' · ultimo caricamento '+updated:''}</span></div><div className="timeframes">{(['5m','15m','1H','4H','1D'] as TF[]).map(t=><button key={t} className={tf===t?'active':''} onClick={()=>setTf(t)}>{t}</button>)}</div></div>
+ <div className="feedBar"><input aria-label="Chiave API Twelve Data" type="password" placeholder="Chiave API Twelve Data (personale)" value={draftKey} onChange={e=>setDraftKey(e.target.value)}/><button onClick={()=>{const key=draftKey.trim();if(key)sessionStorage.setItem('mytrading:tdkey',key);else sessionStorage.removeItem('mytrading:tdkey');setApiKey(key);setRefresh(n=>n+1)}}>Collega feed</button><button onClick={()=>setRefresh(n=>n+1)} disabled={!apiKey}>↻ Aggiorna</button><small>Chiave solo in questa sessione del browser · non inserirla in GitHub</small></div>
  <div className="drawingBar">
  {([['cursor','↖ Seleziona'],['horizontal','━ Livello'],['trend','╱ Trendline'],['fib','≋ Fibonacci']] as [Tool,string][]).map(([id,label])=><button key={id} className={tool===id?'active':''} onClick={()=>changeTool(id)}>{label}</button>)}
  <button onClick={undo} disabled={!drawings.length}>↶ Annulla</button><button onClick={clear} disabled={!drawings.length}>✕ Cancella</button>
